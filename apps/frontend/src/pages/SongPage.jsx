@@ -1,15 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Heart, Play, Radio } from "lucide-react";
+import { Heart, Pause, Play, Radio } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
 export function SongPage() {
   const { id } = useParams();
   const [payload, setPayload] = useState(null);
-  const [playStatus, setPlayStatus] = useState("");
-  const [countdown, setCountdown] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
   const playTimerRef = useRef(null);
-  const countdownTimerRef = useRef(null);
 
   useEffect(() => {
     apiFetch(`/api/songs/${id}`)
@@ -25,40 +23,30 @@ export function SongPage() {
 
   function playSong() {
     clearTimers();
-    setCountdown(10);
-    setPlayStatus("Tocando... play conta em 10s.");
-
-    countdownTimerRef.current = window.setInterval(() => {
-      setCountdown((value) => {
-        if (value <= 1) {
-          window.clearInterval(countdownTimerRef.current);
-          return 0;
-        }
-        return value - 1;
-      });
-    }, 1000);
-
+    setIsPlaying(true);
     playTimerRef.current = window.setTimeout(registerCountedPlay, 10000);
   }
 
+  function pauseSong() {
+    clearTimers();
+    setIsPlaying(false);
+  }
+
   async function registerCountedPlay() {
-    setPlayStatus("Registrando play validado...");
     try {
       const sessionId = localStorage.getItem("orbitune_session_id") || crypto.randomUUID();
       localStorage.setItem("orbitune_session_id", sessionId);
-      const result = await apiFetch("/api/plays/register", {
+      await apiFetch("/api/plays/register", {
         method: "POST",
         body: JSON.stringify({ song_id: id, session_id: sessionId, seconds_listened: 10 }),
       });
-      setPlayStatus(result.accepted ? "+100 streams publicos" : "Limite por hora atingido");
     } catch (error) {
-      setPlayStatus(error.message);
+      console.warn(error.message);
     }
   }
 
   function clearTimers() {
     if (playTimerRef.current) window.clearTimeout(playTimerRef.current);
-    if (countdownTimerRef.current) window.clearInterval(countdownTimerRef.current);
   }
 
   if (!song) {
@@ -79,25 +67,21 @@ export function SongPage() {
           <div className="mt-6 flex flex-wrap gap-3">
             <button
               className="inline-flex items-center gap-2 rounded-full bg-[#282425] px-5 py-3 text-sm font-black text-white"
-              onClick={playSong}
+              onClick={isPlaying ? pauseSong : playSong}
             >
-              <Play size={16} fill="currentColor" /> Play
+              {isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
+              {isPlaying ? "Pausar" : "Play"}
             </button>
             <button className="inline-flex items-center gap-2 rounded-full bg-[#f4f1ef] px-5 py-3 text-sm font-bold">
               <Heart size={16} /> Curtir
             </button>
           </div>
-          {playStatus && (
-            <p className="mt-4 text-sm font-bold text-black/45">
-              {playStatus} {countdown > 0 ? `(${countdown}s)` : ""}
-            </p>
-          )}
         </div>
       </section>
 
       <section className="grid gap-4 md:grid-cols-4">
-        <StatCard label="Streams publicos" value={Number(song.plays_display || 0).toLocaleString("pt-BR")} />
-        <StatCard label="Unique listeners" value={Number(song.unique_display || 0).toLocaleString("pt-BR")} />
+        <StatCard label="Streams" value={Number(song.plays_display || 0).toLocaleString("pt-BR")} />
+        <StatCard label="Chart" value={formatChart(song)} />
         <StatCard label="Genero" value={song.genre || "-"} />
         <StatCard label="Duracao" value={formatDuration(song.duration_seconds)} />
       </section>
@@ -126,4 +110,15 @@ function formatDuration(seconds = 0) {
   const mins = Math.floor(seconds / 60);
   const secs = String(seconds % 60).padStart(2, "0");
   return `${mins}:${secs}`;
+}
+
+function formatChart(song) {
+  if (!song.chart_position) return "-";
+  const type = {
+    hourly: "Hourly",
+    daily: "Daily",
+    weekly: "Weekly",
+  }[song.chart_type] || "Chart";
+
+  return `#${song.chart_position} ${type}`;
 }

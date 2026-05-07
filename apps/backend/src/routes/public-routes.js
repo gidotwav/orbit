@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { demoAlbums, demoArtists, demoSongs } from "../demo-data.js";
 import { supabaseAdmin } from "../lib/supabase.js";
-import { getSettings, inflateStats } from "../services/settings-service.js";
+import { getPublishedStatsForSong, getPublishedStatsForSongs } from "../services/published-stats-service.js";
 
 export const publicRouter = Router();
 
@@ -67,7 +67,13 @@ publicRouter.get("/artists/:id", async (req, res, next) => {
 
     if (songsError) throw songsError;
 
-    res.json({ ok: true, source: "supabase", data: { artist, albums, songs } });
+    const publishedStats = await getPublishedStatsForSongs(songs.map((song) => song.id));
+    const songsWithPublishedStats = songs.map((song) => ({
+      ...song,
+      ...(publishedStats.get(song.id) || emptyPublishedStats()),
+    }));
+
+    res.json({ ok: true, source: "supabase", data: { artist, albums, songs: songsWithPublishedStats } });
   } catch (error) {
     next(error);
   }
@@ -93,7 +99,14 @@ publicRouter.get("/songs", async (_req, res, next) => {
       .order("created_at", { ascending: false });
 
     if (error) throw error;
-    res.json({ ok: true, source: "supabase", data });
+
+    const publishedStats = await getPublishedStatsForSongs(data.map((song) => song.id));
+    const songs = data.map((song) => ({
+      ...song,
+      ...(publishedStats.get(song.id) || emptyPublishedStats()),
+    }));
+
+    res.json({ ok: true, source: "supabase", data: songs });
   } catch (error) {
     next(error);
   }
@@ -126,19 +139,7 @@ publicRouter.get("/songs/:id", async (req, res, next) => {
 
     if (error) throw error;
 
-    const settings = await getSettings();
-    const { data: plays, error: playsError } = await supabaseAdmin
-      .from("plays")
-      .select("id, user_id, session_id")
-      .eq("song_id", req.params.id);
-
-    if (playsError) throw playsError;
-
-    const stats = inflateStats({
-      playsRaw: plays.length,
-      uniqueRaw: new Set(plays.map((play) => play.user_id || play.session_id).filter(Boolean)).size,
-      settings,
-    });
+    const stats = await getPublishedStatsForSong(req.params.id);
 
     res.json({
       ok: true,
@@ -157,3 +158,13 @@ publicRouter.get("/songs/:id", async (req, res, next) => {
     next(error);
   }
 });
+
+function emptyPublishedStats() {
+  return {
+    chart_type: null,
+    chart_position: null,
+    plays_display: 0,
+    unique_display: 0,
+    published_at: null,
+  };
+}

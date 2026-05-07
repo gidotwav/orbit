@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "../lib/supabase.js";
-import { getSettings, inflateStats } from "./settings-service.js";
+import { getSettings } from "./settings-service.js";
+import { getPublishedStatsForSong } from "./published-stats-service.js";
 
 export async function registerPlay({ songId, userId = null, sessionId, secondsListened = 10 }) {
   if (!songId || !sessionId) {
@@ -12,7 +13,6 @@ export async function registerPlay({ songId, userId = null, sessionId, secondsLi
     return {
       source: "demo-local",
       accepted: true,
-      inflated_increment: 100,
     };
   }
 
@@ -49,7 +49,6 @@ export async function registerPlay({ songId, userId = null, sessionId, secondsLi
       accepted: false,
       reason: "hourly_cap_reached",
       max_plays_per_user_per_hour: maxPlays,
-      inflated_increment: 0,
     };
   }
 
@@ -71,7 +70,6 @@ export async function registerPlay({ songId, userId = null, sessionId, secondsLi
   return {
     source: "supabase",
     accepted: true,
-    inflated_increment: settings.play_multiplier,
   };
 }
 
@@ -80,24 +78,11 @@ export async function getSongStats(songId) {
     return { source: "demo-local", song_id: songId, plays_display: 0, unique_display: 0 };
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("plays")
-    .select("id, user_id, session_id")
-    .eq("song_id", songId);
-
-  if (error) throw error;
-
-  const settings = await getSettings();
-  const inflated = inflateStats({
-    playsRaw: data.length,
-    uniqueRaw: new Set(data.map((play) => play.user_id || play.session_id).filter(Boolean)).size,
-    settings,
-  });
+  const published = await getPublishedStatsForSong(songId);
 
   return {
     source: "supabase",
     song_id: songId,
-    plays_display: inflated.plays_display,
-    unique_display: inflated.unique_display,
+    ...published,
   };
 }
