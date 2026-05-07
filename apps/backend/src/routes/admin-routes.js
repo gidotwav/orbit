@@ -77,6 +77,67 @@ adminRouter.patch("/artists/:id", async (req, res, next) => {
   }
 });
 
+adminRouter.get("/albums", async (_req, res, next) => {
+  try {
+    if (!supabaseAdmin) return res.json({ ok: true, source: "demo-local", data: [] });
+
+    const { data, error } = await supabaseAdmin
+      .from("albums")
+      .select("*, artist_profiles(stage_name)")
+      .order("release_date", { ascending: false });
+
+    if (error) throw error;
+    res.json({ ok: true, source: "supabase", data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.post("/albums", async (req, res, next) => {
+  try {
+    if (!supabaseAdmin) return res.json({ ok: true, source: "demo-local", data: req.body });
+
+    const normalizedType = normalizeAlbumType(req.body.type);
+    const { data, error } = await supabaseAdmin
+      .from("albums")
+      .insert({
+        artist_id: req.body.artist_id,
+        title: req.body.title,
+        cover_url: req.body.cover_url || null,
+        release_date: req.body.release_date || new Date().toISOString().slice(0, 10),
+        type: normalizedType,
+      })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ ok: true, source: "supabase", data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.patch("/albums/:id", async (req, res, next) => {
+  try {
+    if (!supabaseAdmin) return res.json({ ok: true, source: "demo-local" });
+
+    const patch = { ...req.body };
+    if (patch.type) patch.type = normalizeAlbumType(patch.type);
+
+    const { data, error } = await supabaseAdmin
+      .from("albums")
+      .update(patch)
+      .eq("id", req.params.id)
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    res.json({ ok: true, source: "supabase", data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 adminRouter.get("/songs", async (_req, res, next) => {
   try {
     if (!supabaseAdmin) return res.json({ ok: true, source: "demo-local", data: [] });
@@ -92,6 +153,12 @@ adminRouter.get("/songs", async (_req, res, next) => {
     next(error);
   }
 });
+
+function normalizeAlbumType(type) {
+  if (type === "single" || type === "EP" || type === "album") return type;
+  if (type === "ep") return "EP";
+  return "album";
+}
 
 adminRouter.post("/songs", async (req, res, next) => {
   try {
