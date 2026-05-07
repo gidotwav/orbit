@@ -3,9 +3,13 @@ import { supabaseAdmin } from "../lib/supabase.js";
 const fallbackSettings = {
   play_multiplier: 100,
   unique_multiplier: 1000,
+  unique_listener_divisor: 10,
+  unique_listener_block: 10000,
   chart_play_weight: 0.6,
   chart_unique_weight: 0.4,
   max_plays_per_song_per_hour: 5,
+  max_plays_per_user_per_hour: 10,
+  min_seconds_to_count: 10,
 };
 
 export async function getSettings() {
@@ -35,8 +39,9 @@ export async function updateSettings(patch) {
 
 export function inflateStats({ playsRaw, uniqueRaw, settings }) {
   const playsDisplay = playsRaw * settings.play_multiplier;
-  const uniqueDisplay =
-    Math.floor(uniqueRaw / 10) * 10 * settings.unique_multiplier;
+  const uniqueDivisor = settings.unique_listener_divisor || 10;
+  const uniqueBlock = settings.unique_listener_block || (10 * settings.unique_multiplier);
+  const uniqueDisplay = Math.floor(uniqueRaw / uniqueDivisor) * uniqueBlock;
   const score =
     playsDisplay * settings.chart_play_weight +
     uniqueDisplay * settings.chart_unique_weight;

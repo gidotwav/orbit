@@ -3,9 +3,9 @@ import { supabaseAdmin } from "../lib/supabase.js";
 import { getSettings, inflateStats } from "./settings-service.js";
 
 const chartPeriods = {
-  hourly: { interval: "1 hour", limit: 100 },
-  daily: { interval: "1 day", limit: 100 },
-  weekly: { interval: "7 days", limit: 100 },
+  hourly: { limit: 100 },
+  daily: { limit: 100 },
+  weekly: { limit: 100 },
 };
 
 export function normalizeChartType(type) {
@@ -52,7 +52,7 @@ export async function calculateAndSaveChart(type) {
 
   const settings = await getSettings();
   const period = chartPeriods[chartType];
-  const snapshotAt = snapshotDate(chartType).toISOString();
+  const { periodStart, periodEnd, snapshotAt } = getChartWindow(chartType);
   const previousBySong = await getPreviousPositions(chartType);
 
   const { data: songs, error: songsError } = await supabaseAdmin
@@ -65,12 +65,12 @@ export async function calculateAndSaveChart(type) {
   const rows = [];
 
   for (const song of songs) {
-    const since = new Date(Date.now() - intervalToMs(period.interval)).toISOString();
     const { data: plays, error: playsError } = await supabaseAdmin
       .from("plays")
       .select("id, user_id, session_id")
       .eq("song_id", song.id)
-      .gte("played_at", since);
+      .gte("played_at", periodStart.toISOString())
+      .lte("played_at", periodEnd.toISOString());
 
     if (playsError) throw playsError;
 
@@ -88,9 +88,16 @@ export async function calculateAndSaveChart(type) {
       plays_display: inflated.plays_display,
       unique_display: inflated.unique_display,
       score: inflated.score,
-      snapshot_at: snapshotAt,
+      snapshot_at: snapshotAt.toISOString(),
       peak_position: null,
       variation: "NEW",
+      previous_position: null,
+      variation_value: null,
+      is_new: true,
+      plays_raw: playsRaw,
+      unique_raw: uniqueRaw,
+      period_start: periodStart.toISOString(),
+      period_end: periodEnd.toISOString(),
     });
   }
 
@@ -100,6 +107,7 @@ export async function calculateAndSaveChart(type) {
     .map((row, index) => {
       const position = index + 1;
       const previous = previousBySong.get(row.song_id);
+      const variationValue = previous?.position ? previous.position - position : null;
       const variation = getVariation(previous?.position, position);
       const previousPeak = previous?.peak_position || previous?.position || position;
 
@@ -107,16 +115,15 @@ export async function calculateAndSaveChart(type) {
         ...row,
         position,
         variation,
+        previous_position: previous?.position || null,
+        variation_value: variationValue,
+        is_new: !previous,
         peak_position: Math.min(previousPeak, position),
       };
     });
 
   if (rankedRows.length) {
-    const { error } = await supabaseAdmin
-      .from("chart_snapshots")
-      .upsert(rankedRows, { onConflict: "song_id,chart_type,snapshot_at" });
-
-    if (error) throw error;
+    await upsertChartRows(rankedRows);
   }
 
   return getLatestChart(chartType);
@@ -142,6 +149,41 @@ function demoChart(chartType) {
       snapshot_at: new Date().toISOString(),
       song,
     }));
+}
+
+async function upsertChartRows(rows) {
+  const { error } = await supabaseAdmin
+    .from("chart_snapshots")
+    .upsert(rows, { onConflict: "song_id,chart_type,snapshot_at" });
+
+  if (!error) return;
+
+  const missingProfessionalColumns =
+    error.message?.includes("previous_position") ||
+    error.message?.includes("variation_value") ||
+    error.message?.includes("is_new") ||
+    error.message?.includes("plays_raw") ||
+    error.message?.includes("period_start");
+
+  if (!missingProfessionalColumns) throw error;
+
+  const legacyRows = rows.map((row) => ({
+    song_id: row.song_id,
+    chart_type: row.chart_type,
+    position: row.position,
+    plays_display: row.plays_display,
+    unique_display: row.unique_display,
+    score: row.score,
+    snapshot_at: row.snapshot_at,
+    peak_position: row.peak_position,
+    variation: row.variation,
+  }));
+
+  const { error: legacyError } = await supabaseAdmin
+    .from("chart_snapshots")
+    .upsert(legacyRows, { onConflict: "song_id,chart_type,snapshot_at" });
+
+  if (legacyError) throw legacyError;
 }
 
 async function getPreviousPositions(chartType) {
@@ -173,25 +215,38 @@ function getVariation(previousPosition, currentPosition) {
   return "=";
 }
 
-function intervalToMs(interval) {
-  if (interval === "1 hour") return 60 * 60 * 1000;
-  if (interval === "1 day") return 24 * 60 * 60 * 1000;
-  return 7 * 24 * 60 * 60 * 1000;
-}
-
-function snapshotDate(chartType) {
+function getChartWindow(chartType) {
   const now = new Date();
+
   if (chartType === "hourly") {
-    now.setMinutes(0, 0, 0);
-    return now;
+    const snapshotAt = new Date(now);
+    snapshotAt.setMinutes(0, 0, 0);
+    return {
+      periodStart: new Date(now.getTime() - 60 * 60 * 1000),
+      periodEnd: now,
+      snapshotAt,
+    };
   }
+
   if (chartType === "daily") {
-    now.setHours(0, 0, 0, 0);
-    return now;
+    const periodStart = new Date(now);
+    periodStart.setHours(0, 0, 0, 0);
+    return {
+      periodStart,
+      periodEnd: now,
+      snapshotAt: periodStart,
+    };
   }
+
+  const periodStart = new Date(now);
   const day = now.getDay();
   const daysSinceMonday = (day + 6) % 7;
-  now.setDate(now.getDate() - daysSinceMonday);
-  now.setHours(0, 0, 0, 0);
-  return now;
+  periodStart.setDate(now.getDate() - daysSinceMonday);
+  periodStart.setHours(0, 0, 0, 0);
+
+  return {
+    periodStart,
+    periodEnd: now,
+    snapshotAt: periodStart,
+  };
 }

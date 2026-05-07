@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "../lib/supabase.js";
-import { getSettings } from "./settings-service.js";
+import { getSettings, inflateStats } from "./settings-service.js";
 
-export async function registerPlay({ songId, userId = null, sessionId }) {
+export async function registerPlay({ songId, userId = null, sessionId, secondsListened = 10 }) {
   if (!songId || !sessionId) {
     const error = new Error("song_id e session_id sao obrigatorios.");
     error.status = 400;
@@ -17,7 +17,16 @@ export async function registerPlay({ songId, userId = null, sessionId }) {
   }
 
   const settings = await getSettings();
+  const minSeconds = settings.min_seconds_to_count || 10;
+
+  if (Number(secondsListened || 0) < minSeconds) {
+    const error = new Error(`Play invalido: ouca pelo menos ${minSeconds}s.`);
+    error.status = 400;
+    throw error;
+  }
+
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const maxPlays = settings.max_plays_per_user_per_hour || settings.max_plays_per_song_per_hour || 10;
 
   let query = supabaseAdmin
     .from("plays")
@@ -34,12 +43,12 @@ export async function registerPlay({ songId, userId = null, sessionId }) {
   const { count, error: countError } = await query;
   if (countError) throw countError;
 
-  if (count >= settings.max_plays_per_song_per_hour) {
+  if (count >= maxPlays) {
     return {
       source: "supabase",
       accepted: false,
       reason: "hourly_cap_reached",
-      max_plays_per_song_per_hour: settings.max_plays_per_song_per_hour,
+      max_plays_per_user_per_hour: maxPlays,
       inflated_increment: 0,
     };
   }
@@ -68,7 +77,7 @@ export async function registerPlay({ songId, userId = null, sessionId }) {
 
 export async function getSongStats(songId) {
   if (!supabaseAdmin) {
-    return { source: "demo-local", song_id: songId, plays_raw: 0, unique_raw: 0 };
+    return { source: "demo-local", song_id: songId, plays_display: 0, unique_display: 0 };
   }
 
   const { data, error } = await supabaseAdmin
@@ -78,10 +87,17 @@ export async function getSongStats(songId) {
 
   if (error) throw error;
 
+  const settings = await getSettings();
+  const inflated = inflateStats({
+    playsRaw: data.length,
+    uniqueRaw: new Set(data.map((play) => play.user_id || play.session_id).filter(Boolean)).size,
+    settings,
+  });
+
   return {
     source: "supabase",
     song_id: songId,
-    plays_raw: data.length,
-    unique_raw: new Set(data.map((play) => play.user_id || play.session_id).filter(Boolean)).size,
+    plays_display: inflated.plays_display,
+    unique_display: inflated.unique_display,
   };
 }

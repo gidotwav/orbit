@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Heart, Play, Radio } from "lucide-react";
 import { apiFetch } from "../lib/api";
@@ -7,6 +7,9 @@ export function SongPage() {
   const { id } = useParams();
   const [payload, setPayload] = useState(null);
   const [playStatus, setPlayStatus] = useState("");
+  const [countdown, setCountdown] = useState(0);
+  const playTimerRef = useRef(null);
+  const countdownTimerRef = useRef(null);
 
   useEffect(() => {
     apiFetch(`/api/songs/${id}`)
@@ -14,23 +17,48 @@ export function SongPage() {
       .catch(() => setPayload(null));
   }, [id]);
 
+  useEffect(() => () => clearTimers(), []);
+
   const song = payload?.song || payload;
   const artist = payload?.artist || payload?.artist_profiles;
   const album = payload?.album || payload?.albums;
 
-  async function playSong() {
-    setPlayStatus("Registrando play...");
+  function playSong() {
+    clearTimers();
+    setCountdown(10);
+    setPlayStatus("Tocando... play conta em 10s.");
+
+    countdownTimerRef.current = window.setInterval(() => {
+      setCountdown((value) => {
+        if (value <= 1) {
+          window.clearInterval(countdownTimerRef.current);
+          return 0;
+        }
+        return value - 1;
+      });
+    }, 1000);
+
+    playTimerRef.current = window.setTimeout(registerCountedPlay, 10000);
+  }
+
+  async function registerCountedPlay() {
+    setPlayStatus("Registrando play validado...");
     try {
       const sessionId = localStorage.getItem("orbitune_session_id") || crypto.randomUUID();
       localStorage.setItem("orbitune_session_id", sessionId);
-      const result = await apiFetch("/api/plays", {
+      const result = await apiFetch("/api/plays/register", {
         method: "POST",
-        body: JSON.stringify({ song_id: id, session_id: sessionId }),
+        body: JSON.stringify({ song_id: id, session_id: sessionId, seconds_listened: 10 }),
       });
       setPlayStatus(result.accepted ? "+100 streams publicos" : "Limite por hora atingido");
     } catch (error) {
       setPlayStatus(error.message);
     }
+  }
+
+  function clearTimers() {
+    if (playTimerRef.current) window.clearTimeout(playTimerRef.current);
+    if (countdownTimerRef.current) window.clearInterval(countdownTimerRef.current);
   }
 
   if (!song) {
@@ -59,7 +87,11 @@ export function SongPage() {
               <Heart size={16} /> Curtir
             </button>
           </div>
-          {playStatus && <p className="mt-4 text-sm font-bold text-black/45">{playStatus}</p>}
+          {playStatus && (
+            <p className="mt-4 text-sm font-bold text-black/45">
+              {playStatus} {countdown > 0 ? `(${countdown}s)` : ""}
+            </p>
+          )}
         </div>
       </section>
 

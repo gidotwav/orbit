@@ -9,6 +9,22 @@ playRouter.post("/", async (req, res, next) => {
       songId: req.body.song_id,
       userId: req.body.user_id || null,
       sessionId: req.body.session_id,
+      secondsListened: req.body.seconds_listened || req.body.secondsListened || 10,
+    });
+
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+playRouter.post("/register", async (req, res, next) => {
+  try {
+    const result = await registerPlay({
+      songId: req.body.song_id,
+      userId: req.body.user_id || null,
+      sessionId: req.body.session_id,
+      secondsListened: req.body.seconds_listened || req.body.secondsListened || 0,
     });
 
     res.json({ ok: true, ...result });
@@ -18,6 +34,15 @@ playRouter.post("/", async (req, res, next) => {
 });
 
 playRouter.get("/songs/:songId/stats", async (req, res, next) => {
+  try {
+    const result = await getSongStats(req.params.songId);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+playRouter.get("/song/:songId/stats", async (req, res, next) => {
   try {
     const result = await getSongStats(req.params.songId);
     res.json({ ok: true, ...result });

@@ -73,6 +73,32 @@ publicRouter.get("/artists/:id", async (req, res, next) => {
   }
 });
 
+publicRouter.get("/songs", async (_req, res, next) => {
+  try {
+    if (!supabaseAdmin) {
+      const songs = demoSongs.map((song) => ({
+        ...song,
+        plays_display: song.plays_raw * 100,
+        unique_display: Math.floor(song.unique_raw / 10) * 10000,
+        plays_raw: undefined,
+        unique_raw: undefined,
+      }));
+      return res.json({ ok: true, source: "demo-local", data: songs });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("songs")
+      .select("id, title, duration_seconds, cover_url, genre, feat, active, artist_profiles(id, stage_name, photo_url, verified), albums(id, title, type)")
+      .eq("active", true)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json({ ok: true, source: "supabase", data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 publicRouter.get("/songs/:id", async (req, res, next) => {
   try {
     if (!supabaseAdmin) {
